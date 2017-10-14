@@ -21,6 +21,7 @@ _Version.h
 # OS
 #
 applet/
+._*
 *.DS_Store
 
 
