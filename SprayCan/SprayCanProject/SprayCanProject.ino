@@ -36,7 +36,7 @@ extern "C" {
 void setup() {
 
   WiFi.forceSleepBegin();
-  yield();
+  yield();  
   
 #ifdef SERIAL_DEBUG
   Serial.begin(74880);
@@ -89,7 +89,7 @@ bool connectToInternet() {
 }
 
 void disconnectInternet() {
-  Serial.print("WiFi disconnect.");
+  Serial.println("WiFi disconnect.");
   WiFi.disconnect();
   WiFi.forceSleepBegin();  // send wifi to sleep to reduce POWER consumption
   yield();
