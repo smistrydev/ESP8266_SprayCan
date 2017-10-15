@@ -20,6 +20,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include "credentials.h"
+#include "Gsender.h"
 
 #define SERIAL_DEBUG
 
@@ -33,6 +34,18 @@ extern "C" {
   // #include "cont.h"
 }
 
+ADC_MODE(ADC_VCC); //vcc read-mode
+
+// State related Variables
+#define STATE_COLDSTART 0
+#define STATE_SLEEP_WAKE 1
+#define STATE_HOUSKEEPING 2
+#define STATE_CONNECT_WIFI 4
+#define RTC_BASE 64
+byte rtcStore[3];
+uint32_t nextSleep, startTime;
+#define TEN_MIN_TIME 10*60*1000000 // 1min
+#define ONE_HOU_TIME 60*60*1000000    // 10sec
 
 // Time related Valriables
 unsigned int localPort = 2390;      // local port to listen for UDP packets
@@ -47,6 +60,9 @@ unsigned int ss = 0;
 
 void setup() {
 
+  startTime = system_get_time();
+  nextSleep = TEN_MIN_TIME;
+
   WiFi.forceSleepBegin();
   yield();
 
@@ -56,17 +72,44 @@ void setup() {
   Serial.println();
 #endif
 
+  system_rtc_mem_read(RTC_BASE, rtcStore, 3);
+
+  if (rtcStore[0] != 123) {
+    rtcStore[0] = 123;
+    rtcStore[1] = STATE_COLDSTART;
+    rtcStore[2] = 0;
+    system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+  } else {
+    if (rtcStore[1] == STATE_SLEEP_WAKE) {
+      rtcStore[2] += 1;
+      //      if (rtcStore[2] > 4) {
+      //        nextSleep = SLEEP_TIME;
+      //      }
+      if (rtcStore[2] > 4) {
+        rtcStore[1] = STATE_CONNECT_WIFI;
+        rtcStore[2] = 0;
+      }
+    }
+  }
+
+
+  if (connectToInternet()) {
+    getTime();
+    if (rtcStore[1] == STATE_COLDSTART) {
+      String timeString = "Time: ";
+      timeString = timeString + hh + ":" + mm + ":" + ss;
+      sendEmail("Device has powered up.", timeString);
+    }
+    delay(1000);
+    disconnectInternet();
+  }
+
 }
 
 void loop() {
 
-  delay(100);
-
-  if (connectToInternet()) {
-    getTime();
-    delay(1000);
-    disconnectInternet();
-  }
+  delay(10);
+  yield();
 
 }
 
@@ -120,9 +163,9 @@ unsigned long getTime() {
 
   Serial.println("Starting UDP");
 
-  int hh = 0;
-  int mm = 0;
-  int ss = 0;
+  hh = 0;
+  mm = 0;
+  ss = 0;
 
   udp.begin(localPort);
 
@@ -146,7 +189,7 @@ unsigned long getTime() {
 
   if (!cb) {
     Serial.println("no packet yet");
-    // ESP.deepSleep(10e6, WAKE_RFCAL);
+    ESP.deepSleep(10e6, WAKE_RFCAL);
   }
   else {
     udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
@@ -168,9 +211,13 @@ unsigned long getTime() {
     Serial.print(':');
     Serial.print(ss);
     Serial.println("");
+
+    return epoch;
+
   }
 
 }
+
 // send an NTP request to the time server at the given address
 unsigned long sendNTPpacket(IPAddress& address)
 {
@@ -194,4 +241,16 @@ unsigned long sendNTPpacket(IPAddress& address)
   udp.beginPacket(address, 123); //NTP requests are to port 123
   udp.write(packetBuffer, NTP_PACKET_SIZE);
   udp.endPacket();
+}
+
+
+void sendEmail(const String &subject, const String &message) {
+  Gsender *gsender = Gsender::Instance();
+  if (gsender->Subject(subject)->Send(EMAILBASE64_LOGIN, EMAILBASE64_PASSWORD, EMAIL_FROM, EMAIL_TO, message)) {
+    Serial.println("Message send.");
+  } else {
+    Serial.print("Error sending message: ");
+    Serial.println(gsender->getError());
+  }
+
 }
