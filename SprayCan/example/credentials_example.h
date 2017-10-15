@@ -16,5 +16,4 @@ const char* EMAILBASE64_PASSWORD = "abcdxyz123...";
 const char* EMAIL_FROM = "some.email.address@gmail.com";
 const char* EMAIL_TO = "some.other@email.com";
 
-
 #endif // SM_CREDENTIALS_h

@@ -243,7 +243,6 @@ unsigned long sendNTPpacket(IPAddress& address)
   udp.endPacket();
 }
 
-
 void sendEmail(const String &subject, const String &message) {
   Gsender *gsender = Gsender::Instance();
   if (gsender->Subject(subject)->Send(EMAILBASE64_LOGIN, EMAILBASE64_PASSWORD, EMAIL_FROM, EMAIL_TO, message)) {
