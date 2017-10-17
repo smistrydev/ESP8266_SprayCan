@@ -44,8 +44,8 @@ ADC_MODE(ADC_VCC); //vcc read-mode
 #define RTC_BASE 64
 byte rtcStore[3];
 uint32_t nextSleep, startTime;
-#define TEN_MIN_TIME 10*60*1000000 // 1min
-#define ONE_HOU_TIME 60*60*1000000    // 10sec
+#define TEN_MIN_TIME 10*60*1000000    // 10 min
+#define ONE_HOU_TIME 60*60*1000000   //  1 hour
 
 // Time related Valriables
 unsigned int localPort = 2390;      // local port to listen for UDP packets
@@ -61,7 +61,10 @@ unsigned int ss = 0;
 void setup() {
 
   startTime = system_get_time();
+
   nextSleep = TEN_MIN_TIME;
+  pinMode(14, OUTPUT);
+  digitalWrite(14, LOW);
 
   WiFi.forceSleepBegin();
   yield();
@@ -79,30 +82,85 @@ void setup() {
     rtcStore[1] = STATE_COLDSTART;
     rtcStore[2] = 0;
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-  } else {
-    if (rtcStore[1] == STATE_SLEEP_WAKE) {
-      rtcStore[2] += 1;
-      //      if (rtcStore[2] > 4) {
-      //        nextSleep = SLEEP_TIME;
-      //      }
-      if (rtcStore[2] > 4) {
-        rtcStore[1] = STATE_CONNECT_WIFI;
-        rtcStore[2] = 0;
+  }
+
+  if (rtcStore[1] == STATE_COLDSTART) {
+    if (connectToInternet()) {
+      getTime();
+      nextSleep = doCalculation();
+      
+      String subject =  "Device ";
+      subject =  subject + ESP.getChipId();
+      subject =  subject + " has Powered up.";
+      String message =  "Battery Power: ";
+      message = message + ESP.getVcc();
+      message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
+
+      if (ESP.getVcc() < 2650) {
+        subject = "WARNING: Battery LOW - " + subject;
       }
+
+      Serial.println(subject);
+      Serial.println(message);
+      
+      sendEmail(subject, message);
+      disconnectInternet();
+      rtcStore[1] = STATE_COLDSTART;
+      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
     }
   }
 
-
-  if (connectToInternet()) {
-    getTime();
-    if (rtcStore[1] == STATE_COLDSTART) {
-      String timeString = "Time: ";
-      timeString = timeString + hh + ":" + mm + ":" + ss;
-      sendEmail("Device has powered up.", timeString);
+  if (rtcStore[1] == STATE_SLEEP_WAKE) {
+    if (rtcStore[2] < 73) {
+      doWork();
     }
-    delay(1000);
-    disconnectInternet();
+    if (rtcStore[1] >= 84) {
+      rtcStore[1] = STATE_HOUSKEEPING;
+      rtcStore[2] = 0;
+      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+      nextSleep = ONE_HOU_TIME - TEN_MIN_TIME;
+      ESP.deepSleep(nextSleep, WAKE_RFCAL);
+    }
   }
+
+  if (rtcStore[1] == STATE_HOUSKEEPING) {
+    if (connectToInternet()) {
+      getTime();
+      nextSleep = doCalculation();
+      String subject =  "Device ";
+      subject =  subject + ESP.getChipId();
+      subject =  subject + " Syncronizing with time.";
+      String message =  "Battery Power: ";
+      message = message + ESP.getVcc();
+      message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
+
+      if (ESP.getVcc() < 2650) {
+        subject = "WARNING: Battery LOW - " + subject;
+      }
+      Serial.println(subject);
+      Serial.println(message);
+      sendEmail(subject, message);
+      disconnectInternet();
+      rtcStore[1] = STATE_SLEEP_WAKE;
+      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+    }
+  }
+
+  rtcStore[2]++;
+  system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+
+  uint32_t runtime = system_get_time() - startTime;
+  nextSleep = nextSleep - runtime;
+
+  if (nextSleep < 1) {
+    nextSleep = ONE_HOU_TIME;
+  }
+
+  Serial.print("Next sleep : ");
+  Serial.println(nextSleep);
+  ESP.deepSleep(nextSleep, WAKE_RF_DISABLED);
+
+  yield();
 
 }
 
@@ -172,49 +230,56 @@ unsigned long getTime() {
   //get a random server from the pool
   WiFi.hostByName(ntpServerName, timeServerIP);
 
-  sendNTPpacket(timeServerIP); // send an NTP packet to a time server
-  // wait to see if a reply is available
+  byte timeAttempt = 0;
 
-  int cb = udp.parsePacket();
+  while (timeAttempt < 10) {
 
-  for (int i = 0; i <= 100; i++) {
-    if (!cb) {
-      cb = udp.parsePacket();
-      delay(10);
-    } else {
-      break;
+    sendNTPpacket(timeServerIP); // send an NTP packet to a time server
+    // wait to see if a reply is available
+
+    int cb = udp.parsePacket();
+
+    for (int i = 0; i <= 100; i++) {
+      if (!cb) {
+        cb = udp.parsePacket();
+        delay(10);
+      } else {
+        break;
+      }
     }
-  }
 
 
-  if (!cb) {
+    if (cb) {
+      udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+
+      unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+      unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+      unsigned long secsSince1900 = highWord << 16 | lowWord;
+
+      const unsigned long seventyYears = 2208988800UL;
+      unsigned long epoch = secsSince1900 - seventyYears;
+
+      hh = ((((epoch  % 86400L) / 3600) + 11) % 24);
+      mm = (epoch  % 3600) / 60;
+      ss = epoch % 60;
+      Serial.print("time:");
+      Serial.print(hh);
+      Serial.print(':');
+      Serial.print(mm);
+      Serial.print(':');
+      Serial.print(ss);
+      Serial.println("");
+
+      return epoch;
+
+    }
+
     Serial.println("no packet yet");
-    ESP.deepSleep(10e6, WAKE_RFCAL);
-  }
-  else {
-    udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
-    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-
-    const unsigned long seventyYears = 2208988800UL;
-    unsigned long epoch = secsSince1900 - seventyYears;
-
-    hh = ((((epoch  % 86400L) / 3600) + 11) % 24);
-    mm = (epoch  % 3600) / 60;
-    ss = epoch % 60;
-    Serial.print("time:");
-    Serial.print(hh);
-    Serial.print(':');
-    Serial.print(mm);
-    Serial.print(':');
-    Serial.print(ss);
-    Serial.println("");
-
-    return epoch;
+    timeAttempt++;
+    delay(10);
 
   }
+  ESP.deepSleep(10e6, WAKE_RFCAL);
 
 }
 
@@ -251,5 +316,30 @@ void sendEmail(const String &subject, const String &message) {
     Serial.print("Error sending message: ");
     Serial.println(gsender->getError());
   }
+}
 
+void doWork() {
+  digitalWrite(14, HIGH);
+  delay(1000);
+  yield();
+  digitalWrite(14, LOW);
+}
+
+uint32_t doCalculation() {
+  uint32_t nextSleep = TEN_MIN_TIME;
+
+  int timeInSecs = ss;
+  timeInSecs = timeInSecs + (mm * 60);
+  timeInSecs = timeInSecs + (hh * 60 * 60);
+  
+  if(){
+  }
+
+  
+  return nextSleep;
+}
+
+void checkBattery() {
+  Serial.print("Battery Voltage: ");
+  Serial.println(ESP.getVcc());
 }
