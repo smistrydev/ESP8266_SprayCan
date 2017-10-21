@@ -84,66 +84,79 @@ void setup() {
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
   }
 
-  if (rtcStore[1] == STATE_COLDSTART) {
-    if (connectToInternet()) {
-      getTime();
-      nextSleep = doCalculation();
-      
-      String subject =  "Device ";
-      subject =  subject + ESP.getChipId();
-      subject =  subject + " has Powered up.";
-      String message =  "Battery Power: ";
-      message = message + ESP.getVcc();
-      message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
+  switch (rtcStore[1]) {
+    case STATE_COLDSTART:
+      if (connectToInternet()) {
+        getTime();
+        nextSleep = doCalculation();
 
-      if (ESP.getVcc() < 2650) {
-        subject = "WARNING: Battery LOW - " + subject;
+        String subject =  "Device ";
+        subject =  subject + ESP.getChipId();
+        subject =  subject + " has Powered up.";
+        String message =  "Battery Power: ";
+        message = message + ESP.getVcc();
+        message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
+        message = message + " Count: ";
+        message = message + rtcStore[2];
+
+        if (ESP.getVcc() < 2650) {
+          subject = "WARNING: Battery LOW - " + subject;
+        }
+
+        Serial.println(subject);
+        Serial.println(message);
+
+        sendEmail(subject, message);
+        disconnectInternet();
+        rtcStore[1] = STATE_SLEEP_WAKE;
+        system_rtc_mem_write(RTC_BASE, rtcStore, 3);
       }
+      break;
+    case STATE_SLEEP_WAKE:
+      if (rtcStore[2] < 72) {
+        doWork();
+      } else {
+        if (connectToInternet()) {
+          String subject =  "Device ";
+          subject = subject + ESP.getChipId();
+          subject = subject + " is Just wake up for Count!!!. Count: ";
+          subject = subject + rtcStore[2];
+          String message =  "Battery Power: ";
+          message = message + ESP.getVcc();
+          sendEmail(subject, message);
+          disconnectInternet();
+        }
 
-      Serial.println(subject);
-      Serial.println(message);
-      
-      sendEmail(subject, message);
-      disconnectInternet();
-      rtcStore[1] = STATE_COLDSTART;
-      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-    }
-  }
-
-  if (rtcStore[1] == STATE_SLEEP_WAKE) {
-    if (rtcStore[2] < 73) {
-      doWork();
-    }
-    if (rtcStore[1] >= 84) {
-      rtcStore[1] = STATE_HOUSKEEPING;
-      rtcStore[2] = 0;
-      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-      nextSleep = ONE_HOU_TIME - TEN_MIN_TIME;
-      ESP.deepSleep(nextSleep, WAKE_RFCAL);
-    }
-  }
-
-  if (rtcStore[1] == STATE_HOUSKEEPING) {
-    if (connectToInternet()) {
-      getTime();
-      nextSleep = doCalculation();
-      String subject =  "Device ";
-      subject =  subject + ESP.getChipId();
-      subject =  subject + " Syncronizing with time.";
-      String message =  "Battery Power: ";
-      message = message + ESP.getVcc();
-      message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
-
-      if (ESP.getVcc() < 2650) {
-        subject = "WARNING: Battery LOW - " + subject;
       }
-      Serial.println(subject);
-      Serial.println(message);
-      sendEmail(subject, message);
-      disconnectInternet();
-      rtcStore[1] = STATE_SLEEP_WAKE;
-      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-    }
+      if (rtcStore[2] >= 83) {
+        rtcStore[1] = STATE_HOUSKEEPING;
+        system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+        nextSleep = ONE_HOU_TIME - TEN_MIN_TIME;
+        ESP.deepSleep(nextSleep, WAKE_RFCAL);
+      }
+      break;
+    case STATE_HOUSKEEPING:
+      if (connectToInternet()) {
+        getTime();
+        nextSleep = doCalculation();
+        String subject =  "Device ";
+        subject =  subject + ESP.getChipId();
+        subject =  subject + " Syncronizing with time.";
+        String message =  "Battery Power: ";
+        message = message + ESP.getVcc();
+        message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
+
+        if (ESP.getVcc() < 2650) {
+          subject = "WARNING: Battery LOW - " + subject;
+        }
+        Serial.println(subject);
+        Serial.println(message);
+        sendEmail(subject, message);
+        disconnectInternet();
+        rtcStore[1] = STATE_SLEEP_WAKE;
+        system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+      }
+      break;
   }
 
   rtcStore[2]++;
@@ -158,7 +171,8 @@ void setup() {
 
   Serial.print("Next sleep : ");
   Serial.println(nextSleep);
-  ESP.deepSleep(nextSleep, WAKE_RF_DISABLED);
+  //  ESP.deepSleep(nextSleep, WAKE_RF_DISABLED);
+  ESP.deepSleep(nextSleep, WAKE_RFCAL);
 
   yield();
 
@@ -319,6 +333,17 @@ void sendEmail(const String &subject, const String &message) {
 }
 
 void doWork() {
+  if (connectToInternet()) {
+    String subject =  "Device ";
+    subject =  subject + ESP.getChipId();
+    subject =  subject + " is DO WORK!!!. Count: ";
+    subject =  subject + rtcStore[2];
+    String message =  "Battery Power: ";
+    message = message + ESP.getVcc();
+    sendEmail(subject, message);
+    disconnectInternet();
+  }
+
   digitalWrite(14, HIGH);
   delay(1000);
   yield();
@@ -328,14 +353,47 @@ void doWork() {
 uint32_t doCalculation() {
   uint32_t nextSleep = TEN_MIN_TIME;
 
+  byte _hh = hh - 7;
+  _hh = _hh % 24;
+
   int timeInSecs = ss;
   timeInSecs = timeInSecs + (mm * 60);
-  timeInSecs = timeInSecs + (hh * 60 * 60);
-  
-  if(){
-  }
+  timeInSecs = timeInSecs + (_hh * 60 * 60);
+  Serial.print("time in seconds: ");
+  Serial.println(timeInSecs);
 
+  if (_hh < 12) {
+    Serial.print("remaining time in seconds to next slot: ");
+    nextSleep = (timeInSecs % 600);
+    nextSleep = 600 - nextSleep;
+    nextSleep = nextSleep * 1000000;
+    Serial.println(nextSleep);
+
+    rtcStore[2] = timeInSecs / 600;
+    system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+    Serial.println("Count : ");
+    Serial.println(rtcStore[2]);
+
+
+  }
+  else {
+    Serial.print("remaining time in seconds to next slot: ");
+    nextSleep = (timeInSecs % 3600);
+    nextSleep = 3600 - nextSleep;
+    nextSleep = nextSleep * 1000000;
+    Serial.println(nextSleep);
+
+    _hh = _hh - 12;
+    _hh = _hh + 72;
+    rtcStore[2] = _hh;
+    system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+
+    Serial.println("Count : ");
+    Serial.println(rtcStore[2]);
+
+  }
   
+  startTime = system_get_time();
   return nextSleep;
 }
 
