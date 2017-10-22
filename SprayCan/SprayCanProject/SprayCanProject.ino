@@ -56,13 +56,18 @@ const char* ntpServerName = "time.nist.gov";
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP udp;
+unsigned long epoch;
 unsigned int hh = 0;
 unsigned int mm = 0;
 unsigned int ss = 0;
 
+#define RTC_ENDT 70
+uint32_t rtcEndTime;
+
 void setup() {
 
   startTime = system_get_time();
+  system_rtc_mem_read(RTC_ENDT, &rtcEndTime, 4);
 
   nextSleep = FIF_MIN_TIME;
   pinMode(14, OUTPUT);
@@ -84,6 +89,7 @@ void setup() {
     rtcStore[1] = STATE_COLDSTART;
     rtcStore[2] = 0;
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+    rtcEndTime = 0;
   }
 
   switch (rtcStore[1]) {
@@ -95,13 +101,22 @@ void setup() {
         String subject =  "Device ";
         subject =  subject + ESP.getChipId();
         subject =  subject + " has Powered up.";
+
         String message =  "Battery Power: ";
         message = message + ESP.getVcc();
-        message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
-        message = message + " Count: ";
+        message = message + "<br />  Power Up Time: " + hh + ":" + mm + ":" + ss;
+        message = message + "<br />  Count: ";
         message = message + rtcStore[2];
-        message = message + " sleep time : ";
+        message = message + "<br />  sleep time (ms): ";
+        message = message + (nextSleep);
+        message = message + "<br />  sleep time (min): ";
         message = message + (nextSleep / 60000000);
+        message = message + "<br />  startTime: ";
+        message = message + startTime;
+        message = message + "<br />  rtcEndTime: ";
+        message = message + rtcEndTime;
+        message = message + "<br />  epoch: ";
+        message = message + epoch;
 
         if (ESP.getVcc() < 2650) {
           subject = "WARNING: Battery LOW - " + subject;
@@ -119,25 +134,46 @@ void setup() {
     case STATE_SLEEP_WAKE:
       if (rtcStore[2] < 48) {
         doWork();
+        nextSleep = nextSleep + 26000000;
+
       } else {
         if (connectToInternet()) {
+          getTime();
+
           String subject =  "Device ";
           subject = subject + ESP.getChipId();
           subject = subject + " is Just wake up for Count!!!. Count: ";
           subject = subject + rtcStore[2];
+
           String message =  "Battery Power: ";
           message = message + ESP.getVcc();
-          message = message + " sleep time : ";
+          message = message + "<br />  Wake Up Time: " + hh + ":" + mm + ":" + ss;
+          message = message + "<br />  Count: ";
+          message = message + rtcStore[2];
+          message = message + "<br />  sleep time (ms): ";
+          message = message + (nextSleep);
+          message = message + "<br />  sleep time (min): ";
           message = message + (nextSleep / 60000000);
+          message = message + "<br />  startTime: ";
+          message = message + startTime;
+          message = message + "<br />  rtcEndTime: ";
+          message = message + rtcEndTime;
+          message = message + "<br />  epoch: ";
+          message = message + epoch;
+
           sendEmail(subject, message);
           disconnectInternet();
         }
-        nextSleep = ONE_HOU_TIME;
+        nextSleep = ONE_HOU_TIME + 137000000;
       }
       if (rtcStore[2] >= 59) {
         rtcStore[1] = STATE_HOUSKEEPING;
         system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-        nextSleep = 1000000;
+        nextSleep = 100;
+
+        rtcEndTime = system_get_time();
+        system_rtc_mem_write(RTC_ENDT, &rtcEndTime, 4);
+
         ESP.deepSleep(nextSleep, WAKE_RFCAL);
       }
       break;
@@ -148,12 +184,22 @@ void setup() {
         String subject =  "Device ";
         subject =  subject + ESP.getChipId();
         subject =  subject + " Syncronizing with time.";
+
         String message =  "Battery Power: ";
         message = message + ESP.getVcc();
-        message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
-
-        message = message + " sleep time : ";
+        message = message + "<br />  HouseKeeping Time: " + hh + ":" + mm + ":" + ss;
+        message = message + "<br />  Count: ";
+        message = message + rtcStore[2];
+        message = message + "<br />  sleep time (ms): ";
+        message = message + (nextSleep);
+        message = message + "<br />  sleep time (min): ";
         message = message + (nextSleep / 60000000);
+        message = message + "<br />  startTime: ";
+        message = message + startTime;
+        message = message + "<br />  rtcEndTime: ";
+        message = message + rtcEndTime;
+        message = message + "<br />  epoch: ";
+        message = message + epoch;
 
         if (ESP.getVcc() < 2650) {
           subject = "WARNING: Battery LOW - " + subject;
@@ -180,6 +226,8 @@ void setup() {
   Serial.print("Next sleep : ");
   Serial.println(nextSleep);
   //  ESP.deepSleep(nextSleep, WAKE_RF_DISABLED);
+  rtcEndTime = system_get_time();
+  system_rtc_mem_write(RTC_ENDT, &rtcEndTime, 4);
   ESP.deepSleep(nextSleep, WAKE_RFCAL);
 
   yield();
@@ -279,7 +327,7 @@ unsigned long getTime() {
       unsigned long secsSince1900 = highWord << 16 | lowWord;
 
       const unsigned long seventyYears = 2208988800UL;
-      unsigned long epoch = secsSince1900 - seventyYears;
+      epoch = secsSince1900 - seventyYears;
 
       hh = ((((epoch  % 86400L) / 3600) + 11) % 24);
       mm = (epoch  % 3600) / 60;
@@ -342,14 +390,28 @@ void sendEmail(const String &subject, const String &message) {
 
 void doWork() {
   if (connectToInternet()) {
+    getTime();
+
     String subject =  "Device ";
     subject =  subject + ESP.getChipId();
     subject =  subject + " is DO WORK!!!. Count: ";
     subject =  subject + rtcStore[2];
+
     String message =  "Battery Power: ";
     message = message + ESP.getVcc();
-    message = message + " sleep time : ";
+    message = message + "<br />  Work Time: " + hh + ":" + mm + ":" + ss;
+    message = message + "<br />  Count: ";
+    message = message + rtcStore[2];
+    message = message + "<br />  sleep time (ms): ";
+    message = message + (nextSleep);
+    message = message + "<br />  sleep time (min): ";
     message = message + (nextSleep / 60000000);
+    message = message + "<br />  startTime: ";
+    message = message + startTime;
+    message = message + "<br />  rtcEndTime: ";
+    message = message + rtcEndTime;
+    message = message + "<br />  epoch: ";
+    message = message + epoch;
 
     sendEmail(subject, message);
     disconnectInternet();
@@ -404,7 +466,6 @@ uint32_t doCalculation() {
 
   }
 
-  startTime = system_get_time();
   return nextSleep;
 }
 
