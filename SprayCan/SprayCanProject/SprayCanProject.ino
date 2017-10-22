@@ -44,8 +44,10 @@ ADC_MODE(ADC_VCC); //vcc read-mode
 #define RTC_BASE 64
 byte rtcStore[3];
 uint32_t nextSleep, startTime;
-#define TEN_MIN_TIME 10*60*1000000    // 10 min
+#define ONE_SEC_TIME       1000000   //  1 sec
+#define FIF_MIN_TIME 15*60*1000000    // 15 min
 #define ONE_HOU_TIME 60*60*1000000   //  1 hour
+
 
 // Time related Valriables
 unsigned int localPort = 2390;      // local port to listen for UDP packets
@@ -62,7 +64,7 @@ void setup() {
 
   startTime = system_get_time();
 
-  nextSleep = TEN_MIN_TIME;
+  nextSleep = FIF_MIN_TIME;
   pinMode(14, OUTPUT);
   digitalWrite(14, LOW);
 
@@ -98,6 +100,8 @@ void setup() {
         message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
         message = message + " Count: ";
         message = message + rtcStore[2];
+        message = message + " sleep time : ";
+        message = message + (nextSleep / 60000000);
 
         if (ESP.getVcc() < 2650) {
           subject = "WARNING: Battery LOW - " + subject;
@@ -113,7 +117,7 @@ void setup() {
       }
       break;
     case STATE_SLEEP_WAKE:
-      if (rtcStore[2] < 72) {
+      if (rtcStore[2] < 48) {
         doWork();
       } else {
         if (connectToInternet()) {
@@ -123,15 +127,17 @@ void setup() {
           subject = subject + rtcStore[2];
           String message =  "Battery Power: ";
           message = message + ESP.getVcc();
+          message = message + " sleep time : ";
+          message = message + (nextSleep / 60000000);
           sendEmail(subject, message);
           disconnectInternet();
         }
-
+        nextSleep = ONE_HOU_TIME;
       }
-      if (rtcStore[2] >= 83) {
+      if (rtcStore[2] >= 59) {
         rtcStore[1] = STATE_HOUSKEEPING;
         system_rtc_mem_write(RTC_BASE, rtcStore, 3);
-        nextSleep = ONE_HOU_TIME - TEN_MIN_TIME;
+        nextSleep = 1000000;
         ESP.deepSleep(nextSleep, WAKE_RFCAL);
       }
       break;
@@ -146,6 +152,9 @@ void setup() {
         message = message + ESP.getVcc();
         message = message + " Power Up Time: " + hh + ":" + mm + ":" + ss;
 
+        message = message + " sleep time : ";
+        message = message + (nextSleep / 60000000);
+
         if (ESP.getVcc() < 2650) {
           subject = "WARNING: Battery LOW - " + subject;
         }
@@ -154,6 +163,9 @@ void setup() {
         sendEmail(subject, message);
         disconnectInternet();
         rtcStore[1] = STATE_SLEEP_WAKE;
+        if (rtcStore[2] >= 84) {
+          rtcStore[2] = 255;
+        }
         system_rtc_mem_write(RTC_BASE, rtcStore, 3);
       }
       break;
@@ -164,10 +176,6 @@ void setup() {
 
   uint32_t runtime = system_get_time() - startTime;
   nextSleep = nextSleep - runtime;
-
-  if (nextSleep < 1) {
-    nextSleep = ONE_HOU_TIME;
-  }
 
   Serial.print("Next sleep : ");
   Serial.println(nextSleep);
@@ -340,6 +348,9 @@ void doWork() {
     subject =  subject + rtcStore[2];
     String message =  "Battery Power: ";
     message = message + ESP.getVcc();
+    message = message + " sleep time : ";
+    message = message + (nextSleep / 60000000);
+
     sendEmail(subject, message);
     disconnectInternet();
   }
@@ -351,7 +362,7 @@ void doWork() {
 }
 
 uint32_t doCalculation() {
-  uint32_t nextSleep = TEN_MIN_TIME;
+  uint32_t nextSleep = FIF_MIN_TIME;
 
   byte _hh = hh - 7;
   _hh = _hh % 24;
@@ -364,12 +375,12 @@ uint32_t doCalculation() {
 
   if (_hh < 12) {
     Serial.print("remaining time in seconds to next slot: ");
-    nextSleep = (timeInSecs % 600);
-    nextSleep = 600 - nextSleep;
+    nextSleep = (timeInSecs % 900);
+    nextSleep = 900 - nextSleep;
     nextSleep = nextSleep * 1000000;
     Serial.println(nextSleep);
 
-    rtcStore[2] = timeInSecs / 600;
+    rtcStore[2] = timeInSecs / 900;
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
     Serial.println("Count : ");
     Serial.println(rtcStore[2]);
@@ -384,7 +395,7 @@ uint32_t doCalculation() {
     Serial.println(nextSleep);
 
     _hh = _hh - 12;
-    _hh = _hh + 72;
+    _hh = _hh + 47;
     rtcStore[2] = _hh;
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
 
@@ -392,7 +403,7 @@ uint32_t doCalculation() {
     Serial.println(rtcStore[2]);
 
   }
-  
+
   startTime = system_get_time();
   return nextSleep;
 }
