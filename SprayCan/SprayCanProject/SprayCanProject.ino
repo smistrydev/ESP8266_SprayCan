@@ -91,6 +91,42 @@ void setup() {
     system_rtc_mem_write(RTC_BASE, rtcStore, 3);
     rtcEndTime = 0;
   }
+  else {
+    struct rst_info *info;
+    info = system_get_rst_info();
+    int reason = info->reason;
+
+    if (reason == 0) {
+      Serial.println("REASON 0 - REASON_DEFAULT_RST");
+    }
+    if (reason == 1) {
+      Serial.println("REASON 1 - REASON_WDT_RST");
+    }
+    if (reason == 2) {
+      Serial.println("REASON 2 - REASON_EXCEPTION_RST");
+    }
+    if (reason == 3) {
+      Serial.println("REASON 3 - REASON_SOFT_WDT_RST");
+    }
+    if (reason == 4) {
+      Serial.println("REASON 4 - REASON_SOFT_RESTART");
+    }
+    if (reason == 5) {
+      Serial.println("REASON 5 - REASON_DEEP_SLEEP_AWAKE");
+    }
+    if (reason == 6) {
+      Serial.println("REASON 6 - REASON_EXT_SYS_RST ");
+    }
+
+    if (reason == 6) {
+      rtcStore[0] = 123;
+      rtcStore[1] = STATE_HOUSKEEPING;
+      rtcStore[2] = 0;
+      system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+      Serial.println("Reset button press detected.");
+    }
+
+  }
 
   switch (rtcStore[1]) {
     case STATE_COLDSTART:
@@ -134,7 +170,7 @@ void setup() {
     case STATE_SLEEP_WAKE:
       if (rtcStore[2] < 48) {
         doWork();
-        nextSleep = nextSleep + 26000000;
+        nextSleep = nextSleep + 24000000;
 
       } else {
         if (connectToInternet()) {
@@ -166,7 +202,7 @@ void setup() {
         }
         nextSleep = ONE_HOU_TIME + 137000000;
       }
-      if (rtcStore[2] >= 59) {
+      if (rtcStore[2] >= 60) {
         rtcStore[1] = STATE_HOUSKEEPING;
         system_rtc_mem_write(RTC_BASE, rtcStore, 3);
         nextSleep = 100;
@@ -204,15 +240,20 @@ void setup() {
         if (ESP.getVcc() < 2650) {
           subject = "WARNING: Battery LOW - " + subject;
         }
+
         Serial.println(subject);
         Serial.println(message);
         sendEmail(subject, message);
         disconnectInternet();
+
         rtcStore[1] = STATE_SLEEP_WAKE;
-        if (rtcStore[2] >= 84) {
+        if (rtcStore[2] >= 60) {
           rtcStore[2] = 255;
         }
+
         system_rtc_mem_write(RTC_BASE, rtcStore, 3);
+        ESP.deepSleep(nextSleep, WAKE_RFCAL);
+
       }
       break;
   }
